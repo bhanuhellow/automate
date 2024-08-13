@@ -1,0 +1,75 @@
+#!/bin/bash
+if [ -f "Vagrantfile" ]; then
+  echo "Warning: Vagrantfile already exists."
+  read -p "Do you want to delete the current environment? (yes/no): " choice
+  if [[ "$choice" == "yes" ]]; then
+    vagrant destroy -f  # Force destroy without confirmation
+    echo "Current environment destroyed."
+  else
+    echo "Exiting. Goodbye!"
+    exit 0
+  fi
+else
+  echo "Preparing environment..."
+  vagrant init  # Initialize a new Vagrant environment
+fi
+
+# Prompt for VM name
+read -p "Enter the VM name you prefer: " NODES_NAME
+
+# Prompt for the number of VMs
+read -p "Enter the number of VMs you want to create: " NODES_NUM
+
+# Prompt for RAM size
+read -p "Enter the amount of RAM (in MB) for each VM: " MEM_SIZE
+
+# Prompt for the number of CPUs
+read -p "Enter the number of CPUs for each VM: " CPU_COUNT
+
+# Prompt for the OS name and version
+read -p "Enter the OS name and version you want: " os
+
+# Construct the image name
+IMAGE_NAME="generic/$os"
+
+# Create the Vagrantfile
+cat <<EOF > Vagrantfile
+NODES_NAME = "$NODES_NAME"
+NODES_NUM = $NODES_NUM
+MEM_SIZE = $MEM_SIZE
+CPU_COUNT = $CPU_COUNT
+IMAGE_NAME = "$IMAGE_NAME"
+
+Vagrant.configure("2") do |config|
+  config.ssh.insert_key = false
+
+  # Loop to create managed nodes
+  (1..NODES_NUM).each do |i|
+      config.vm.define "node#{i}" do |node|
+      node.vm.box = IMAGE_NAME
+      node.vm.hostname = "#{NODES_NAME}#{i}"
+      node.vm.network "public_network", bridge: "eth0: Wi-Fi (AirPort)", ip: "192.168.0.#{i+150}"
+
+      node.vm.provider "virtualbox" do |vb|
+        vb.name = "#{NODES_NAME}#{i}"
+        vb.memory = "#{MEM_SIZE}"
+        vb.cpus = "#{CPU_COUNT}"
+      end
+
+      node.vm.provision "file", source: "/etc/hosts", destination: "/tmp/hosts"
+      node.vm.provision "file", source: "~/.ssh/id_rsa.pub", destination: "host_ssh_public_key"
+      node.vm.provision "shell", inline: <<-SHELL
+        cat host_ssh_public_key >> /home/vagrant/.ssh/authorized_keys
+        sudo mv /tmp/hosts /etc/hosts
+        sudo chmod 644 /etc/hosts
+        sudo sed -i "s/PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config && systemctl restart sshd
+        echo redhat | passwd vagrant --stdin
+      SHELL
+    end
+  end
+end
+EOF
+
+echo "Provisioning the VMs for you, Sit back and relax...."
+# Run vagrant up
+vagrant up
